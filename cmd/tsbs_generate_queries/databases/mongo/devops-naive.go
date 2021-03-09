@@ -18,6 +18,7 @@ func init() {
 	gob.Register([]map[string]interface{}{})
 	gob.Register(bson.M{})
 	gob.Register([]bson.M{})
+	gob.Register(time.Time{})
 }
 
 // NaiveDevops produces Mongo-specific queries for the devops use case.
@@ -42,33 +43,36 @@ func (d *NaiveDevops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRa
 	metrics, err := devops.GetCPUMetricsSlice(numMetrics)
 	panicIfErr(err)
 
-	bucketNano := time.Minute.Nanoseconds()
 	pipelineQuery := []bson.M{
 		{
-			"$match": map[string]interface{}{
+			"$match": bson.M{
 				"measurement": "cpu",
-				"timestamp_ns": map[string]interface{}{
-					"$gte": interval.StartUnixNano(),
-					"$lt":  interval.EndUnixNano(),
+				"time": bson.M{
+					"$gte": interval.Start(),
+					"$lt":  interval.End(),
 				},
-				"tags.hostname": map[string]interface{}{
+				"tags.hostname": bson.M{
 					"$in": hostnames,
 				},
 			},
 		},
 		{
-			"$project": map[string]interface{}{
+			"$project": bson.M{
 				"_id": 0,
-				"time_bucket": map[string]interface{}{
-					"$subtract": []interface{}{
-						"$timestamp_ns",
-						map[string]interface{}{"$mod": []interface{}{"$timestamp_ns", bucketNano}},
+				"time_bucket": bson.M{
+					"$dateSubtract": bson.M{
+						"startDate": "$time",
+						"unit":      "second",
+						"amount":    bson.M{"$second": bson.M{"date": "$time"}},
 					},
 				},
-
-				"fields": 1,
 			},
 		},
+	}
+
+	projectMap := pipelineQuery[1]["$project"].(bson.M)
+	for _, metric := range metrics {
+		projectMap[metric] = 1
 	}
 
 	group := bson.M{
@@ -78,7 +82,7 @@ func (d *NaiveDevops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRa
 	}
 	resultMap := group["$group"].(bson.M)
 	for _, metric := range metrics {
-		resultMap["max_"+metric] = bson.M{"$max": "$fields." + metric}
+		resultMap["max_"+metric] = bson.M{"$max": "$" + metric}
 	}
 	pipelineQuery = append(pipelineQuery, group)
 	pipelineQuery = append(pipelineQuery, bson.M{"$sort": bson.M{"_id": 1}})
@@ -102,15 +106,14 @@ func (d *NaiveDevops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
 	interval := d.Interval.MustRandWindow(devops.DoubleGroupByDuration)
 	metrics, err := devops.GetCPUMetricsSlice(numMetrics)
 	panicIfErr(err)
-	bucketNano := time.Hour.Nanoseconds()
 
 	pipelineQuery := []bson.M{
 		{
 			"$match": bson.M{
 				"measurement": "cpu",
-				"timestamp_ns": bson.M{
-					"$gte": interval.StartUnixNano(),
-					"$lt":  interval.EndUnixNano(),
+				"time": bson.M{
+					"$gte": interval.Start(),
+					"$lt":  interval.End(),
 				},
 			},
 		},
@@ -118,17 +121,20 @@ func (d *NaiveDevops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
 			"$project": bson.M{
 				"_id": 0,
 				"time_bucket": bson.M{
-					"$subtract": []interface{}{
-						"$timestamp_ns",
-						bson.M{"$mod": []interface{}{"$timestamp_ns", bucketNano}},
+					"$dateSubtract": bson.M{
+						"startDate": "$time",
+						"unit":      "second",
+						"amount":    bson.M{"$second": bson.M{"date": "$time"}},
 					},
 				},
-
-				"fields":      1,
-				"measurement": 1,
-				"tags":        "$tags.hostname",
+				"tags.hostname": 1,
 			},
 		},
+	}
+
+	projectMap := pipelineQuery[1]["$project"].(bson.M)
+	for _, metric := range metrics {
+		projectMap[metric] = 1
 	}
 
 	// Add groupby operator
@@ -136,21 +142,15 @@ func (d *NaiveDevops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
 		"$group": bson.M{
 			"_id": bson.M{
 				"time":     "$time_bucket",
-				"hostname": "$tags",
+				"hostname": "$tags.hostname",
 			},
 		},
 	}
 	resultMap := group["$group"].(bson.M)
 	for _, metric := range metrics {
-		resultMap["avg_"+metric] = bson.M{"$avg": "$fields." + metric}
+		resultMap["avg_"+metric] = bson.M{"$avg": "$" + metric}
 	}
 	pipelineQuery = append(pipelineQuery, group)
-
-	// Add sort operator
-	pipelineQuery = append(pipelineQuery, []bson.M{
-		{"$sort": bson.M{"_id.hostname": 1}},
-		{"$sort": bson.M{"_id.time": 1}},
-	}...)
 	pipelineQuery = append(pipelineQuery, bson.M{"$sort": bson.M{"_id.time": 1, "_id.hostname": 1}})
 
 	humanLabel := devops.GetDoubleGroupByLabel("Mongo [NAIVE]", numMetrics)

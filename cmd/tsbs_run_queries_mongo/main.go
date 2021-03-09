@@ -42,6 +42,7 @@ func init() {
 	gob.Register(bson.M{})
 	gob.Register(bson.D{})
 	gob.Register([]bson.M{})
+	gob.Register(time.Time{})
 
 	var config query.BenchmarkRunnerConfig
 	config.AddToFlagSet(pflag.CommandLine)
