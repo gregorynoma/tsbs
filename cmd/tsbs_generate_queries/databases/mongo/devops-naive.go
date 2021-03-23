@@ -217,9 +217,9 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 
 	project := bson.M{
 		"$project": bson.M{
-			"_id":           0,
-			"time":          1,
-			"tags.hostname": 1,
+			"_id":  0,
+			"time": 1,
+			"tags": "$tags.hostname",
 		},
 	}
 	projectMap := project["$project"].(bson.M)
@@ -227,6 +227,7 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 		projectMap[metric] = 1
 	}
 	pipelineQuery = append(pipelineQuery, project)
+	pipelineQuery = append(pipelineQuery, bson.M{"$match": bson.M{"usage_user": bson.M{"$gt": 90.0}}})
 
 	humanLabel, err := devops.GetHighCPULabel("Mongo", nHosts)
 	panicIfErr(err)
