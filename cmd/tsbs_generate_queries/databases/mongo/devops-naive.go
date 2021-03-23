@@ -204,7 +204,6 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 				"$gte": interval.Start(),
 				"$lt":  interval.End(),
 			},
-			"usage_user": bson.M{"$gt": 90.0},
 		},
 	}
 	if nHosts > 0 {
