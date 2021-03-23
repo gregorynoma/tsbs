@@ -18,6 +18,7 @@ func init() {
 	gob.Register(map[string]interface{}{})
 	gob.Register([]map[string]interface{}{})
 	gob.Register(bson.M{})
+	gob.Register(bson.D{})
 	gob.Register([]bson.M{})
 	gob.Register(time.Time{})
 }
@@ -58,35 +59,20 @@ func (d *NaiveDevops) GroupByTime(qi query.Query, nHosts, numMetrics int, timeRa
 			},
 		},
 		{
-			"$project": bson.M{
-				"_id": 0,
-				"time_bucket": bson.M{
-					"$dateSubtract": bson.M{
-						"startDate": "$time",
-						"unit":      "second",
-						"amount":    bson.M{"$second": bson.M{"date": "$time"}},
-					},
+			"$group": bson.M{
+				"_id": bson.M{
+					"$dateTrunc": bson.M{"date": "$time", "unit": "minute"},
 				},
 			},
 		},
-	}
-
-	projectMap := pipelineQuery[1]["$project"].(bson.M)
-	for _, metric := range metrics {
-		projectMap[metric] = 1
-	}
-
-	group := bson.M{
-		"$group": bson.M{
-			"_id": "$time_bucket",
+		{
+			"$sort": bson.M{"_id": 1},
 		},
 	}
-	resultMap := group["$group"].(bson.M)
+	resultMap := pipelineQuery[1]["$group"].(bson.M)
 	for _, metric := range metrics {
 		resultMap["max_"+metric] = bson.M{"$max": "$" + metric}
 	}
-	pipelineQuery = append(pipelineQuery, group)
-	pipelineQuery = append(pipelineQuery, bson.M{"$sort": bson.M{"_id": 1}})
 
 	humanLabel := []byte(fmt.Sprintf("Mongo [NAIVE] %d cpu metric(s), random %4d hosts, random %s by 1m", numMetrics, nHosts, timeRange))
 	q := qi.(*query.Mongo)
@@ -119,41 +105,23 @@ func (d *NaiveDevops) GroupByTimeAndPrimaryTag(qi query.Query, numMetrics int) {
 			},
 		},
 		{
-			"$project": bson.M{
-				"_id": 0,
-				"time_bucket": bson.M{
-					"$dateFromParts": bson.M{
-						"year":  bson.M{"$year": "$time"},
-						"month": bson.M{"$month": "$time"},
-						"day":   bson.M{"$dayOfMonth": "$time"},
-						"hour":  bson.M{"$hour": "$time"},
+			"$group": bson.M{
+				"_id": bson.M{
+					"time": bson.M{
+						"$dateTrunc": bson.M{"date": "$time", "unit": "hour"},
 					},
+					"hostname": "$tags.hostname",
 				},
-				"tags.hostname": 1,
 			},
 		},
-	}
-
-	projectMap := pipelineQuery[1]["$project"].(bson.M)
-	for _, metric := range metrics {
-		projectMap[metric] = 1
-	}
-
-	// Add groupby operator
-	group := bson.M{
-		"$group": bson.M{
-			"_id": bson.M{
-				"time":     "$time_bucket",
-				"hostname": "$tags.hostname",
-			},
+		{
+			"$sort": bson.D{{"_id.time", 1}, {"_id.hostname", 1}},
 		},
 	}
-	resultMap := group["$group"].(bson.M)
+	resultMap := pipelineQuery[1]["$group"].(bson.M)
 	for _, metric := range metrics {
 		resultMap["avg_"+metric] = bson.M{"$avg": "$" + metric}
 	}
-	pipelineQuery = append(pipelineQuery, group)
-	pipelineQuery = append(pipelineQuery, bson.M{"$sort": bson.M{"_id.time": 1, "_id.hostname": 1}})
 
 	humanLabel := devops.GetDoubleGroupByLabel("Mongo [NAIVE]", numMetrics)
 	q := qi.(*query.Mongo)
@@ -190,35 +158,20 @@ func (d *NaiveDevops) MaxAllCPU(qi query.Query, nHosts int) {
 			},
 		},
 		{
-			"$project": bson.M{
-				"_id": 0,
-				"time_bucket": bson.M{
-					"$dateFromParts": bson.M{
-						"year":  bson.M{"$year": "$time"},
-						"month": bson.M{"$month": "$time"},
-						"day":   bson.M{"$dayOfMonth": "$time"},
-						"hour":  bson.M{"$hour": "$time"},
-					},
+			"$group": bson.M{
+				"_id": bson.M{
+					"$dateTrunc": bson.M{"date": "$time", "unit": "hour"},
 				},
 			},
 		},
-	}
-	projectMap := pipelineQuery[1]["$project"].(bson.M)
-	for _, metric := range metrics {
-		projectMap[metric] = 1
-	}
-
-	group := bson.M{
-		"$group": bson.M{
-			"_id": "$time_bucket",
+		{
+			"$sort": bson.M{"_id": 1},
 		},
 	}
-	resultMap := group["$group"].(bson.M)
+	resultMap := pipelineQuery[1]["$group"].(bson.M)
 	for _, metric := range metrics {
 		resultMap["max_"+metric] = bson.M{"$max": "$" + metric}
 	}
-	pipelineQuery = append(pipelineQuery, group)
-	pipelineQuery = append(pipelineQuery, bson.M{"$sort": bson.M{"_id": 1}})
 
 	humanLabel := devops.GetMaxAllLabel("Mongo", nHosts)
 	q := qi.(*query.Mongo)
@@ -251,6 +204,7 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 				"$gte": interval.Start(),
 				"$lt":  interval.End(),
 			},
+			"usage_user": bson.M{"$gt": 90.0},
 		},
 	}
 	if nHosts > 0 {
@@ -263,9 +217,9 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 
 	project := bson.M{
 		"$project": bson.M{
-			"_id":  0,
-			"time": 1,
-			"tags": "$tags.hostname",
+			"_id":           0,
+			"time":          1,
+			"tags.hostname": 1,
 		},
 	}
 	projectMap := project["$project"].(bson.M)
@@ -273,7 +227,6 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 		projectMap[metric] = 1
 	}
 	pipelineQuery = append(pipelineQuery, project)
-	pipelineQuery = append(pipelineQuery, bson.M{"$match": bson.M{"usage_user": bson.M{"$gt": 90.0}}})
 
 	humanLabel, err := devops.GetHighCPULabel("Mongo", nHosts)
 	panicIfErr(err)
@@ -382,22 +335,11 @@ func (d *NaiveDevops) GroupByOrderByLimit(qi query.Query) {
 			},
 		},
 		{
-			"$project": bson.M{
-				"_id": 0,
-				"time_bucket": bson.M{
-					"$dateSubtract": bson.M{
-						"startDate": "$time",
-						"unit":      "second",
-						"amount":    bson.M{"$second": bson.M{"date": "$time"}},
-					},
-				},
-				"field": "$usage_user",
-			},
-		},
-		{
 			"$group": bson.M{
-				"_id":       "$time_bucket",
-				"max_value": bson.M{"$max": "$field"},
+				"_id": bson.M{
+					"$dateTrunc": bson.M{"date": "$time", "unit": "minute"},
+				},
+				"max_value": bson.M{"$max": "$usage_user"},
 			},
 		},
 		{"$sort": bson.M{"_id": -1}},
