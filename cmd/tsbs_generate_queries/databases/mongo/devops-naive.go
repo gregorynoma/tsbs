@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/uses/devops"
 	"github.com/timescale/tsbs/internal/utils"
@@ -191,7 +192,6 @@ func (d *NaiveDevops) MaxAllCPU(qi query.Query, nHosts int) {
 // AND (hostname = '$HOST' OR hostname = '$HOST2'...)
 func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 	interval := d.Interval.MustRandWindow(devops.HighCPUDuration)
-	metrics := devops.GetAllCPUMetrics()
 
 	pipelineQuery := []bson.M{}
 
@@ -213,19 +213,7 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 		matchMap["tags.hostname"] = bson.M{"$in": hostnames}
 	}
 	pipelineQuery = append(pipelineQuery, match)
-
-	project := bson.M{
-		"$project": bson.M{
-			"_id":  0,
-			"time": 1,
-			"tags": "$tags.hostname",
-		},
-	}
-	projectMap := project["$project"].(bson.M)
-	for _, metric := range metrics {
-		projectMap[metric] = 1
-	}
-	pipelineQuery = append(pipelineQuery, project)
+	pipelineQuery = append(pipelineQuery, bson.M{"$set": bson.M{"tags": "$tags.hostname"}})
 	pipelineQuery = append(pipelineQuery, bson.M{"$match": bson.M{"usage_user": bson.M{"$gt": 90.0}}})
 
 	humanLabel, err := devops.GetHighCPULabel("Mongo", nHosts)
@@ -237,75 +225,35 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 	q.HumanDescription = []byte(fmt.Sprintf("%s: %s (%s)", humanLabel, interval.StartString(), q.CollectionName))
 }
 
-// LastPointPerHost finds the last row for every host in the dataset
+// LastPointPerHost finds the last row for every host in the dataset, e.g. in pseudo-SQL:
+
+// SELECT DISTINCT ON (hostname) * FROM cpu
+// ORDER BY hostname, time DESC
 func (d *NaiveDevops) LastPointPerHost(qi query.Query) {
 	metrics := devops.GetAllCPUMetrics()
 
 	pipelineQuery := []bson.M{
 		{"$match": bson.M{"measurement": "cpu"}},
+		{"$sort": bson.M{"time": -1}},
 		{
 			"$group": bson.M{
-				"_id":       bson.M{"hostname": "$tags.hostname"},
-				"last_time": bson.M{"$max": "$time"},
-			},
-		},
-		{
-			"$group": bson.M{
-				"_id":   bson.M{"last_time": "$last_time"},
-				"hosts": bson.M{"$addToSet": "$_id.hostname"},
-			},
-		},
-		{
-			"$lookup": bson.M{
-				"from": "point_data",
-				"let":  bson.M{"time": "$_id.last_time", "hosts": "$hosts"},
-				"pipeline": []bson.M{
-					{
-						"$match": bson.M{
-							"$expr": bson.M{
-								"$and": []bson.M{
-									{"$eq": []interface{}{"$time", "$$time"}},
-									{"$in": []interface{}{"$tags.hostname", "$$hosts"}},
-									{"$eq": []interface{}{"$measurement", "cpu"}},
-								},
-							},
-						},
-					},
-					{
-						"$project": bson.M{
-							"time":          1,
-							"tags.hostname": 1,
-							"_id":           0,
-						},
-					},
-				},
-				"as": "results",
-			},
-		},
-		{
-			"$unwind": "$results",
-		},
-		{
-			"$project": bson.M{
-				"hostname":    "$results.tags.hostname",
-				"result.time": "$results.time",
-				"_id":         0,
+				"_id":       "$tags.hostname",
+				"last_time": bson.M{"$first": "$time"},
 			},
 		},
 	}
 
-	lookupPipeline := pipelineQuery[3]["$lookup"].(bson.M)["pipeline"]
-	lookupProjectMap := lookupPipeline.([]bson.M)[1]["$project"].(bson.M)
-	projectMap := pipelineQuery[5]["$project"].(bson.M)
+	groupMap := pipelineQuery[2]["$group"].(bson.M)
 	for _, metric := range metrics {
-		lookupProjectMap[metric] = 1
-		projectMap["result."+metric] = "$results." + metric
+		groupMap[metric] = bson.M{"$first": "$" + metric}
 	}
 
 	humanLabel := "Mongo last row per host"
 	q := qi.(*query.Mongo)
 	q.HumanLabel = []byte(humanLabel)
 	q.BsonDoc = pipelineQuery
+	q.Opts = &options.AggregateOptions{}
+	q.Opts.SetAllowDiskUse(true)
 	q.CollectionName = []byte("point_data")
 	q.HumanDescription = []byte(fmt.Sprintf("%s", humanLabel))
 }
@@ -313,9 +261,9 @@ func (d *NaiveDevops) LastPointPerHost(qi query.Query) {
 // GroupByOrderByLimit populates a query.Query that has a time WHERE clause, that groups by a
 // truncated date, orders by that date, and takes a limit, e.g. in pseudo-SQL:
 //
-// SELECT date_trunc('minute', time) AS t, MAX(cpu) FROM cpu
+// SELECT minute, MAX(cpu) FROM cpu
 // WHERE time < '$TIME'
-// GROUP BY t ORDER BY t DESC
+// GROUP BY minute ORDER BY minute DESC
 // LIMIT $LIMIT
 func (d *NaiveDevops) GroupByOrderByLimit(qi query.Query) {
 	interval := d.Interval.MustRandWindow(time.Hour)

@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Mongo encodes a Mongo request. This will be serialized for use
@@ -14,6 +15,7 @@ type Mongo struct {
 	HumanDescription []byte
 	CollectionName   []byte
 	BsonDoc          []bson.M
+	Opts             *options.AggregateOptions
 	id               uint64
 }
 
@@ -25,6 +27,7 @@ var MongoPool = sync.Pool{
 			HumanDescription: []byte{},
 			CollectionName:   []byte{},
 			BsonDoc:          []bson.M{},
+			Opts:             &options.AggregateOptions{},
 		}
 	},
 }

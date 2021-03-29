@@ -48,7 +48,7 @@ func init() {
 	config.AddToFlagSet(pflag.CommandLine)
 
 	pflag.String("url", "mongodb://localhost:27017", "Daemon URL.")
-	pflag.Duration("read-timeout", 30*time.Second, "Timeout value for individual queries")
+	pflag.Duration("read-timeout", 300*time.Second, "Timeout value for individual queries")
 
 	pflag.Parse()
 
@@ -92,7 +92,7 @@ func (p *processor) ProcessQuery(q query.Query, _ bool) ([]*query.Stat, error) {
 	mq := q.(*query.Mongo)
 	start := time.Now().UnixNano()
 
-	cursor, err := p.collection.Aggregate(context.Background(), mq.BsonDoc)
+	cursor, err := p.collection.Aggregate(context.Background(), mq.BsonDoc, mq.Opts)
 	if err != nil {
 		log.Fatal(err)
 	}
