@@ -204,6 +204,7 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 				"$gte": interval.Start(),
 				"$lt":  interval.End(),
 			},
+			"usage_user": bson.M{"$gt": 90.0},
 		},
 	}
 	if nHosts > 0 {
@@ -214,7 +215,6 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 	}
 	pipelineQuery = append(pipelineQuery, match)
 	pipelineQuery = append(pipelineQuery, bson.M{"$set": bson.M{"tags": "$tags.hostname"}})
-	pipelineQuery = append(pipelineQuery, bson.M{"$match": bson.M{"usage_user": bson.M{"$gt": 90.0}}})
 
 	humanLabel, err := devops.GetHighCPULabel("Mongo", nHosts)
 	panicIfErr(err)

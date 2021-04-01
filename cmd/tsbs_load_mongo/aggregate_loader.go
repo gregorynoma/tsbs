@@ -62,7 +62,7 @@ func (b *aggBenchmark) GetPointIndexer(maxPartitions uint) load.PointIndexer {
 // point is a reusable data structure to store a BSON data document for Mongo,
 // that can then be manipulated for bookkeeping and final document preparation
 type point struct {
-	Timestamp int64                  `bson:"timestamp_ns"`
+	Timestamp time.Time              `bson:"timestamp_ns"`
 	Fields    map[string]interface{} `bson:"fields"`
 }
 
@@ -133,8 +133,8 @@ func (p *aggProcessor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) 
 		}
 
 		// Determine which document this event belongs too
-		ts := event.Timestamp()
-		dateKey := time.Unix(0, ts).UTC().Format(aggDateFmt)
+		ts := time.Unix(0, event.Timestamp())
+		dateKey := ts.UTC().Format(aggDateFmt)
 		docKey := fmt.Sprintf("day_%s_%s_%s", tagsMap["hostname"], dateKey, string(event.MeasurementName()))
 
 		// Check that it has been created using a cached map, if not, add
@@ -184,8 +184,8 @@ func (p *aggProcessor) ProcessBatch(b load.Batch, doLoad bool) (uint64, uint64) 
 			selector := bson.M{aggDocID: docKey}
 			updateMap := bson.M{}
 			for _, event := range events {
-				minKey := (event.Timestamp / (1e9 * 60)) % 60
-				secKey := (event.Timestamp / 1e9) % 60
+				minKey := event.Timestamp.Minute()
+				secKey := event.Timestamp.Second()
 				key := fmt.Sprintf("events.%d.%d", minKey, secKey)
 				val := event.Fields
 
