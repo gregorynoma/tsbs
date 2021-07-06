@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/timescale/tsbs/cmd/tsbs_generate_queries/uses/devops"
 	"github.com/timescale/tsbs/internal/utils"
@@ -230,30 +229,47 @@ func (d *NaiveDevops) HighCPUForHosts(qi query.Query, nHosts int) {
 // SELECT DISTINCT ON (hostname) * FROM cpu
 // ORDER BY hostname, time DESC
 func (d *NaiveDevops) LastPointPerHost(qi query.Query) {
-	metrics := devops.GetAllCPUMetrics()
-
 	pipelineQuery := []bson.M{
 		{"$match": bson.M{"measurement": "cpu"}},
-		{"$sort": bson.M{"time": -1}},
 		{
 			"$group": bson.M{
-				"_id":       "$tags.hostname",
-				"last_time": bson.M{"$first": "$time"},
+				"_id":       bson.M{"hostname": "$tags.hostname"},
+				"last_time": bson.M{"$max": "$time"},
 			},
 		},
-	}
-
-	groupMap := pipelineQuery[2]["$group"].(bson.M)
-	for _, metric := range metrics {
-		groupMap[metric] = bson.M{"$first": "$" + metric}
+		{
+			"$lookup": bson.M{
+				"from": "point_data",
+				"let":  bson.M{"time": "$last_time", "hostname": "$_id.hostname"},
+				"pipeline": []bson.M{
+					{
+						"$match": bson.M{
+							"$expr": bson.M{
+								"$and": []bson.M{
+									{"$eq": []interface{}{"$time", "$$time"}},
+									{"$eq": []interface{}{"$tags.hostname", "$$hostname"}},
+									{"$eq": []interface{}{"$measurement", "cpu"}},
+								},
+							},
+						},
+					},
+					{
+						"$project": bson.M{
+							"time": 0,
+							"tags": 0,
+							"_id":  0,
+						},
+					},
+				},
+				"as": "metrics",
+			},
+		},
 	}
 
 	humanLabel := "Mongo last row per host"
 	q := qi.(*query.Mongo)
 	q.HumanLabel = []byte(humanLabel)
 	q.BsonDoc = pipelineQuery
-	q.Opts = &options.AggregateOptions{}
-	q.Opts.SetAllowDiskUse(true)
 	q.CollectionName = []byte("point_data")
 	q.HumanDescription = []byte(fmt.Sprintf("%s", humanLabel))
 }
