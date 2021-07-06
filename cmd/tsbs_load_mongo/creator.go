@@ -68,8 +68,15 @@ func (d *dbCreator) CreateDB(dbName string) error {
 		return fmt.Errorf("create collection err: %v", res.Err().Error())
 	}
 
-	if !documentPer {
-		model := []mongo.IndexModel{
+	var model []mongo.IndexModel
+	if documentPer {
+		model = []mongo.IndexModel{
+			{
+				Keys: bson.D{{"time", 1}, {"tags.hostname", 1}},
+			},
+		}
+	} else {
+		model = []mongo.IndexModel{
 			{
 				Keys: bson.D{{aggDocID, 1}},
 			},
@@ -77,11 +84,11 @@ func (d *dbCreator) CreateDB(dbName string) error {
 				Keys: bson.D{{aggKeyID, 1}, {"measurement", 1}, {"tags.hostname", 1}},
 			},
 		}
-		opts := options.CreateIndexes()
-		_, err := d.client.Database(dbName).Collection(collectionName).Indexes().CreateMany(context.Background(), model, opts)
-		if err != nil {
-			return fmt.Errorf("create indexes err: %v", err.Error())
-		}
+	}
+	opts := options.CreateIndexes()
+	_, err := d.client.Database(dbName).Collection(collectionName).Indexes().CreateMany(context.Background(), model, opts)
+	if err != nil {
+		return fmt.Errorf("create indexes err: %v", err.Error())
 	}
 
 	return nil
