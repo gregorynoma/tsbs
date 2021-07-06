@@ -92,7 +92,7 @@ func (p *processor) ProcessQuery(q query.Query, _ bool) ([]*query.Stat, error) {
 	mq := q.(*query.Mongo)
 	start := time.Now().UnixNano()
 
-	cursor, err := p.collection.Aggregate(context.Background(), mq.BsonDoc, mq.Opts)
+	cursor, err := p.collection.Aggregate(context.Background(), mq.BsonDoc)
 	if err != nil {
 		log.Fatal(err)
 	}
